@@ -1,4 +1,4 @@
-![Preview](TO_DEFINE)
+![Preview](https://github.com/pvtoari/mpvpaper-stop/blob/master/media/preview.gif)
 # mpvpaper-stop
 
 `mpvpaper-stop` is a lightweight background utility designed to work with [mpvpaper](https://github.com/GhostNaN/mpvpaper). It automatically pauses `mpvpaper` when any window becomes visible on your active Hyprland workspace and resumes playback when no windows are displayed.
