@@ -117,7 +117,7 @@ This will:
 To run `mpvpaper-stop` automatically on Hyprland startup, add it to your `hyprland.conf` after the `exec` line for `mpvpaper`:
 ```ini
 # In your hyprland.conf
-exec-once = mpvpaper -o "input-ipc-server=/tmp/mpvsocket" '*' /path/to/your/video.mp4
+exec-once = mpvpaper -o "--input-ipc-server=/tmp/mpvsocket" '*' /path/to/your/video.mp4
 exec-once = /path/to/your/mpvpaper-stop # Use the actual path to the executable
 ```
 
