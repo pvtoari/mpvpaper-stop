@@ -5,6 +5,8 @@ set(CMAKE_C_STANDARD 11)
 
 include(FetchContent)
 
+set(BUILD_SHARED_LIBS OFF CACHE INTERNAL "Build static libs")
+
 FetchContent_Declare(
 	cjson
 	GIT_REPOSITORY https://github.com/DaveGamble/cJSON
