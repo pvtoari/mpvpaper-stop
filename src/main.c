@@ -263,7 +263,7 @@ int main(int argc, char **argv) {
             case 't':
                 period = atoi(optarg);
                 break;
-            case 'a':
+            case 'w':
                 socket_wait_time = atoi(optarg);
                 period = atoi(optarg);
                 break;
