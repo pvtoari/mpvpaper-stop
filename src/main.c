@@ -6,23 +6,21 @@
 #include <time.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-#include <sys/inotify.h>
-#include <errno.h>
 #include <string.h>
 
 #include "../include/constants.h"
 #include <cJSON.h>
 
-bool verbose = false, fork_process = false;
-
-typedef enum {
-    STATE_PAUSED,
-    STATE_PLAYING
-} player_state;
-
-void log_verbose(const char* message) {
-    if (verbose) printf("%ld: %s\n", time(NULL), message);
-}
+typedef struct {
+    bool verbose;
+    bool fork_process;
+    char* mpvpaper_socket_path;
+    int mpvpaper_socket_fd;
+    char* hyprland_socket_path;
+    int hyprland_socket_fd;
+    int socket_wait_time;
+    int polling_period;
+} config_t;
 
 void print_help(const char *program_name) {
     printf("Usage: %s [options]\n", program_name);
@@ -35,106 +33,127 @@ void print_help(const char *program_name) {
     printf("  -h, --help             Shows this help message\n");
 }
 
-void wait_for_socket(const char *socket_path, int wait_time) {
+void log_verbose(const char* message, const config_t* config) {
+    if (!config->verbose) return;
+
+    printf("%ld: %s\n", time(NULL), message);
+}
+
+char* get_hyprctl_socket_path() {
+    char* xdg_runtime_dir = getenv("XDG_RUNTIME_DIR");
+    if (!xdg_runtime_dir) {
+        fprintf(stderr, "XDG_RUNTIME_DIR is not set\n");
+        exit(EXIT_FAILURE);
+    }
+
+    char* hyprland_instance_signature = getenv("HYPRLAND_INSTANCE_SIGNATURE");
+    if (!hyprland_instance_signature) {
+        fprintf(stderr, "HYPRLAND_INSTANCE_SIGNATURE is not set\n");
+        exit(EXIT_FAILURE);
+    }
+
+    char path[128];
+    snprintf(path, sizeof(path), "%s/hypr/%s/.socket.sock", xdg_runtime_dir, hyprland_instance_signature);
+
+    if (access(path, F_OK) != 0) {
+        fprintf(stderr, "Hyprctl socket path %s does not exist\n", path);
+        exit(EXIT_FAILURE);
+    }
+
+    return strdup(path);
+}
+
+void init_config(config_t* config) {
+    config->verbose = false;
+    config->fork_process = false;
+    config->mpvpaper_socket_path = DEFAULT_MPVPAPER_SOCKET_PATH;
+    config->mpvpaper_socket_fd = -1;
+    config->hyprland_socket_path = get_hyprctl_socket_path();
+    config->hyprland_socket_fd = -1;
+    config->socket_wait_time = DEFAULT_MPVPAPER_SOCKET_WAIT_TIME;
+    config->polling_period = DEFAULT_PERIOD;
+}
+
+void wait_for_socket(const char *socket_path, const config_t* config) {
     int elapsed = 0;
-    while (elapsed < wait_time * 1000) {
+    while (elapsed < config->socket_wait_time * 1000) {
         const int interval = 100000;
         if (access(socket_path, F_OK) == 0) {
-            log_verbose("Socket available");
+            char msg[256];
+            snprintf(msg, sizeof(msg), "Socket %s is available", socket_path);
+            log_verbose(msg, config);
+
             return;
         }
 
-        log_verbose("Socket not available, sleeping...");
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Socket %s not available, sleeping...", socket_path);
+        log_verbose(msg, config);
+
         usleep(interval);
         elapsed += interval;
     }
 
-    fprintf(stderr, "Socket %s not available after waiting %d ms\n", socket_path, wait_time);
+    fprintf(stderr, "Socket %s not available after waiting %d ms\n", socket_path, config->socket_wait_time);
     exit(EXIT_FAILURE);
 }
 
 
-void validate_period(int period) {
-    if (period <= 0) {
-        fprintf(stderr, "Period must be greater than 0\n");
-        exit(EXIT_FAILURE);
-    }
-}
-
-char* run_command_string(const char* command) {
-    FILE* fp = popen(command, "r");
-    if (!fp) return NULL;
-
-    char buffer[512];
-    char* output = NULL;
-    size_t output_len = 0;
-
-    output = malloc(1);
-    if (!output) {
-        pclose(fp);
-        return NULL;
-    }
-
-    output[0] = '\0';
-    
-    while (fgets(buffer, sizeof(buffer), fp)) {
-        size_t buffer_len = strlen(buffer);
-        char* new_output = realloc(output, output_len + buffer_len + 1);
-        if (!new_output) {
-            free(output);
-            pclose(fp);
-            return NULL;
-        }
-
-        output = new_output;
-        strcpy(output + output_len, buffer);
-        output_len += buffer_len;
-    }
-
-    pclose(fp);
-
-    return output;
-}
-
-char* send_mpv_command(const char* socket_path, const char* command) {
+int initialize_socket(const char* socket_path) {
     int sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (sockfd < 0) {
         perror("Socket error");
-        return NULL;
+        exit(EXIT_FAILURE);
     }
 
-    char buffer [4096] = {0};
-    char* response = NULL;
     struct sockaddr_un addr = {0};
-
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path) - 1);
 
     if (connect(sockfd, (struct sockaddr*) &addr, sizeof(addr)) < 0) {
         perror("Connection to socket error");
         close(sockfd);
-        return NULL;
+        exit(EXIT_FAILURE);
     }
 
-    if (write(sockfd, command, strlen(command)) < 0) {
+    return sockfd;
+}
+
+char* send_to_socket(const char* command, int* socket_fd, const char* socket_path, const bool reconnect) {
+    if (reconnect) {
+        close(*socket_fd);
+        *socket_fd = initialize_socket(socket_path);
+    }
+
+    char buffer [4096] = {0};
+    char* response = NULL;
+
+    if (write(*socket_fd, command, strlen(command)) < 0) {
         perror("Write to socket error");
-        close(sockfd);
+        close(*socket_fd);
+
         return NULL;
     }
 
-    ssize_t n = read(sockfd, buffer, sizeof(buffer) - 1);
+    const ssize_t n = read(*socket_fd, buffer, sizeof(buffer) - 1);
     if (n > 0) {
         buffer[n] = '\0';
         response = strdup(buffer);
     }
 
-    close(sockfd);
-
     return response;
 }
 
-int queryWindows() {
-    char* json_str = run_command_string(QUERY_ACTIVE_WORKSPACE_COMMAND);
+char* send_to_mpv_socket(const char* command, config_t* config) {
+    return send_to_socket(command, &config->mpvpaper_socket_fd, config->mpvpaper_socket_path, false);
+}
+
+char* send_to_hyprland_socket(const char* command, config_t* config) {
+    return send_to_socket(command, &config->hyprland_socket_fd, config->hyprland_socket_path, true);
+}
+
+int query_windows(config_t* config) {
+    char* json_str = send_to_hyprland_socket(QUERY_HYPRLAND_SOCKET_ACTIVE_WORKSPACE, config);
     if (!json_str) {
         fprintf(stderr, "Failed to query active workspace\n");
         return -1;
@@ -156,8 +175,8 @@ int queryWindows() {
     return windows;
 }
 
-bool queryPauseStatus(const char* socket_path) {
-    char* json_str = send_mpv_command(socket_path, QUERY_SOCKET_PAUSE_PROPERTY);
+bool query_pause_status(config_t* config) {
+    char* json_str = send_to_mpv_socket(QUERY_MPVPAPER_SOCKET_PAUSE_PROPERTY, config);
 
     if (!json_str) {
         fprintf(stderr, "Failed to query pause status\n");
@@ -180,40 +199,46 @@ bool queryPauseStatus(const char* socket_path) {
     return paused;
 }
 
-void resume_mpv(const char* socket_path) {
-    log_verbose("Resuming");
-    char* response = send_mpv_command(socket_path, SET_SOCKET_RESUME);
+void resume_mpv(config_t* config) {
+    log_verbose("Resuming", config);
+    char* response = send_to_mpv_socket(SET_MPVPAPER_SOCKET_RESUME, config);
 
     if (response) free(response);
 }
 
-void pause_mpv(const char* socket_path) {
-    log_verbose("Pausing");
-    char* response = send_mpv_command(socket_path, SET_SOCKET_PAUSE);
+void pause_mpv(config_t* config) {
+    log_verbose("Pausing", config);
+    char* response = send_to_mpv_socket(SET_MPVPAPER_SOCKET_PAUSE, config);
 
     if (response) free(response);
 }
 
-void update_state(const char* socket_path, player_state* current_state) {
-    int windows = queryWindows();
+void update_mpv_state(config_t* config) {
+	static int last_windows = -1;
+	static bool last_paused = false;
 
+    int windows = query_windows(config);
     if (windows < 0) return;
 
-    bool is_paused = queryPauseStatus(socket_path);
+    bool is_paused = query_pause_status(config);
+
+	if(windows == last_windows && is_paused == last_paused) return;
+
+	last_windows = windows;
+	last_paused = is_paused;
+
     char message[64];
     snprintf(message, sizeof(message), "{windows: %d, paused: %d}", windows, is_paused);
-    log_verbose(message);
+    log_verbose(message, config);
 
     if (windows == 0 && is_paused) {
-        resume_mpv(socket_path);
-        *current_state = STATE_PLAYING;
+        resume_mpv(config);
     } else if (windows > 0 && !is_paused) {
-        pause_mpv(socket_path);
-        *current_state = STATE_PAUSED;
+        pause_mpv(config);
     }
 }
 
-void fork_if(bool flag) {
+void fork_if(const bool flag) {
     if (!flag) return;
 
     int pid = fork();
@@ -230,42 +255,47 @@ void fork_if(bool flag) {
     }
 }
 
+void validate_period(int period) {
+    if (period <= 0) {
+        fprintf(stderr, "Period must be greater than 0\n");
+        exit(EXIT_FAILURE);
+    }
+}
+
 int main(int argc, char **argv) {
     int opt;
-    char* socket_path = DEFAULT_SOCKET_PATH;
-    int period = DEFAULT_PERIOD;
-    int socket_wait_time = DEFAULT_SOCKET_WAIT_TIME;
-
     struct option long_options[] = {
-        {"verbose", no_argument, NULL, 'v'},
-        {"fork", no_argument, NULL, 'f'},
-        {"socket-path", required_argument, NULL, 'p'},
-        {"socket-wait-time", required_argument, NULL, 'w'},
-        {"period", required_argument, NULL, 't'},
         {"help", no_argument, NULL, 'h'},
+        {"period", required_argument, NULL, 't'},
+        {"socket-path", required_argument, NULL, 'p'},
+        {"fork", no_argument, NULL, 'f'},
+        {"verbose", no_argument, NULL, 'v'},
+        {"socket-wait-time", required_argument, NULL, 'w'},
         {0, 0, 0, 0}
     };
 
-    while ((opt = getopt_long(argc, argv, "vfp:t:h", long_options, NULL)) != -1) {
+    config_t config;
+    init_config(&config);
+
+    while ((opt = getopt_long(argc, argv, "hvfp:t:w:", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h':
                 print_help(argv[0]);
                 return 0;
-            case 'v':
-                verbose = true;
-                break;
             case 'f':
-                fork_process = true;
+                config.fork_process = true;
+                break;
+            case 'v':
+                config.verbose = true;
                 break;
             case 'p':
-                socket_path = optarg;
+                config.mpvpaper_socket_path = optarg;
                 break;
             case 't':
-                period = atoi(optarg);
+                config.polling_period = atoi(optarg);
                 break;
-            case 'a':
-                socket_wait_time = atoi(optarg);
-                period = atoi(optarg);
+            case 'w':
+                config.socket_wait_time = atoi(optarg);
                 break;
             default:
                 print_help(argv[0]);
@@ -273,15 +303,16 @@ int main(int argc, char **argv) {
         }
     }
 
-    fork_if(fork_process);
-    wait_for_socket(socket_path, socket_wait_time);
-    validate_period(period);
+    validate_period(config.polling_period);
+    wait_for_socket(config.mpvpaper_socket_path, &config);
+    fork_if(config.fork_process);
+    config.mpvpaper_socket_fd = initialize_socket(config.mpvpaper_socket_path);
+    config.hyprland_socket_fd = initialize_socket(config.hyprland_socket_path);
 
-    player_state current_state = STATE_PAUSED;
-    log_verbose("Starting monitoring loop");
+    log_verbose("Starting monitoring loop", &config);
 
     while (1) {
-        update_state(socket_path, &current_state);
-        usleep(period*1000);
+        update_mpv_state(&config);
+        usleep(config.polling_period*1000);
     }
 }
