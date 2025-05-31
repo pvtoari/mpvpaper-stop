@@ -8,7 +8,7 @@
 ## How it works
 
 `mpvpaper-stop` periodically performs the following actions:
-1.  It queries Hyprland (using `hyprctl activeworkspace -j`) to determine the number of visible windows on the active workspace.
+1.  It queries Hyprland via its IPC socket to determine the number of visible windows on the active workspace.
 2.  It checks the current playback status of `mpvpaper` (paused or playing) via its IPC socket.
 3.  If there are no windows visible and `mpvpaper` is paused, it sends a resume command.
 4.  If there are one or more windows visible and `mpvpaper` is playing, it sends a pause command.
@@ -27,8 +27,7 @@ This ensures that your video wallpaper only plays when it's actually visible.
 
 ### Runtime:
 *   **[mpvpaper](https://github.com/GhostNaN/mpvpaper)**: Must be installed and running with IPC socket enabled.
-*   **Hyprland**: Required for window detection via `hyprctl`.
-*   **`hyprctl`**: Command-line utility for Hyprland.
+*   **Hyprland**
 
 ### Build-time:
 *   **CMake** (version 3.5 or higher)
