@@ -54,9 +54,16 @@ char* get_hyprctl_socket_path() {
 
     char path[128];
     snprintf(path, sizeof(path), "%s/hypr/%s/.socket.sock", xdg_runtime_dir, hyprland_instance_signature);
+    
+	bool xdg_access_failed = access(path, F_OK) != 0; 
+	if(!xdg_access_failed) return strdup(path); 
 
-    if (access(path, F_OK) != 0) {
-        fprintf(stderr, "Hyprctl socket path %s does not exist\n", path);
+	fprintf(stderr, "error: hyprland socket at %s not found, fallbacking to /tmp/hypr/\n", path);
+	
+	snprintf(path, sizeof(path), "/tmp/hypr/%s/.socket.sock", hyprland_instance_signature);
+	bool tmp_access_failed = access(path, F_OK) != 0;
+    if (tmp_access_failed) {
+        fprintf(stderr, "error: hyprland socket path %s does not exist\n", path);
         exit(EXIT_FAILURE);
     }
 
