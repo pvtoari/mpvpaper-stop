@@ -42,13 +42,13 @@ void log_verbose(const char* message, const config_t* config) {
 char* get_hyprctl_socket_path() {
     char* xdg_runtime_dir = getenv("XDG_RUNTIME_DIR");
     if (!xdg_runtime_dir) {
-        fprintf(stderr, "XDG_RUNTIME_DIR is not set\n");
+        fprintf(stderr, "error: XDG_RUNTIME_DIR is not set\n");
         exit(EXIT_FAILURE);
     }
 
     char* hyprland_instance_signature = getenv("HYPRLAND_INSTANCE_SIGNATURE");
     if (!hyprland_instance_signature) {
-        fprintf(stderr, "HYPRLAND_INSTANCE_SIGNATURE is not set\n");
+        fprintf(stderr, "error: HYPRLAND_INSTANCE_SIGNATURE is not set\n");
         exit(EXIT_FAILURE);
     }
 
@@ -101,7 +101,7 @@ void wait_for_socket(const char *socket_path, const config_t* config) {
         elapsed += interval;
     }
 
-    fprintf(stderr, "Socket %s not available after waiting %d ms\n", socket_path, config->socket_wait_time);
+    fprintf(stderr, "error: socket %s not available after waiting %d ms\n", socket_path, config->socket_wait_time);
     exit(EXIT_FAILURE);
 }
 
@@ -109,7 +109,7 @@ void wait_for_socket(const char *socket_path, const config_t* config) {
 int initialize_socket(const char* socket_path) {
     int sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (sockfd < 0) {
-        perror("Socket error");
+        perror("error: socket error");
         exit(EXIT_FAILURE);
     }
 
@@ -118,7 +118,7 @@ int initialize_socket(const char* socket_path) {
     strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path) - 1);
 
     if (connect(sockfd, (struct sockaddr*) &addr, sizeof(addr)) < 0) {
-        perror("Connection to socket error");
+        perror("error: connection to socket error");
         close(sockfd);
         exit(EXIT_FAILURE);
     }
@@ -136,7 +136,7 @@ char* send_to_socket(const char* command, int* socket_fd, const char* socket_pat
     char* response = NULL;
 
     if (write(*socket_fd, command, strlen(command)) < 0) {
-        perror("Write to socket error");
+        perror("error: write to socket error");
         close(*socket_fd);
 
         return NULL;
@@ -162,7 +162,7 @@ char* send_to_hyprland_socket(const char* command, config_t* config) {
 int query_windows(config_t* config) {
     char* json_str = send_to_hyprland_socket(QUERY_HYPRLAND_SOCKET_ACTIVE_WORKSPACE, config);
     if (!json_str) {
-        fprintf(stderr, "Failed to query active workspace\n");
+        fprintf(stderr, "error: failed to query active workspace\n");
         return -1;
     }
 
@@ -170,7 +170,7 @@ int query_windows(config_t* config) {
     free(json_str);
 
     if (!json) {
-        fprintf(stderr, "Failed to parse JSON\n");
+        fprintf(stderr, "error: failed to parse JSON\n");
         return -1;
     }
 
@@ -186,7 +186,7 @@ bool query_pause_status(config_t* config) {
     char* json_str = send_to_mpv_socket(QUERY_MPVPAPER_SOCKET_PAUSE_PROPERTY, config);
 
     if (!json_str) {
-        fprintf(stderr, "Failed to query pause status\n");
+        fprintf(stderr, "error: failed to query pause status\n");
         return false;
     }
 
@@ -194,7 +194,7 @@ bool query_pause_status(config_t* config) {
     free(json_str);
 
     if (!json) {
-        fprintf(stderr, "Failed to parse JSON\n");
+        fprintf(stderr, "error: failed to parse JSON\n");
         return false;
     }
 
@@ -250,21 +250,21 @@ void fork_if(const bool flag) {
 
     int pid = fork();
     if (pid < 0) {
-        perror("Fork failed");
+        perror("error: fork failed");
         exit(EXIT_FAILURE);
     }
 
     if (pid > 0) exit(EXIT_SUCCESS);
 
     if (setsid() < 0) {
-        perror("Setsid failed");
+        perror("error: setsid failed");
         exit(EXIT_FAILURE);
     }
 }
 
 void validate_period(int period) {
     if (period <= 0) {
-        fprintf(stderr, "Period must be greater than 0\n");
+        fprintf(stderr, "error: period must be greater than 0\n");
         exit(EXIT_FAILURE);
     }
 }
