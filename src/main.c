@@ -4,16 +4,20 @@
 #include <getopt.h>
 #include <stdbool.h>
 #include <time.h>
+#include <errno.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <string.h>
 
 #include "../include/constants.h"
-#include <cJSON.h>
+#include <cjson/cJSON.h>
 
 typedef struct {
     bool verbose;
     bool fork_process;
+    bool do_pywal;
     char* mpvpaper_socket_path;
     int mpvpaper_socket_fd;
     char* hyprland_socket_path;
@@ -30,6 +34,7 @@ void print_help(const char *program_name) {
     printf("  -p, --socket-path PATH Path to the mpvpaper socket (default: /tmp/mpvsocket)\n");
     printf("  -w, --socket-wait-time TIME Wait time for the socket in milliseconds (default: 5000)\n");
     printf("  -t, --period TIME      Polling period in milliseconds (default: 1000)\n");
+    printf("  -c, --pywal	         Runs pywal on pause");
     printf("  -h, --help             Shows this help message\n");
 }
 
@@ -206,6 +211,109 @@ bool query_pause_status(config_t* config) {
     return paused;
 }
 
+void create_temp_dir() {
+	if (mkdir(TEMP_DIR, 0755) == -1) {
+        if (errno != EEXIST) {
+            perror("error: failed to create TEMP_DIR");
+            exit(EXIT_FAILURE);
+        }
+    }
+}
+
+void validate_pywal(config_t *config) {
+	FILE *fp = popen("wal -v", "r");
+	if (fp == NULL) {
+		perror("error: unable to open process");
+		exit(EXIT_FAILURE);
+	}
+
+	int status = WEXITSTATUS(pclose(fp));
+	if (status != EXIT_SUCCESS) {
+		perror("error: cannot run pywal");
+		exit(EXIT_FAILURE);
+	}
+
+	log_verbose("pywal is available", config);
+	create_temp_dir();
+
+	char *json_str = send_to_mpv_socket(SET_MPVPAPER_SCREENSHOT_DIR, config);
+	if(!json_str) {
+		perror("error: failed to set temp screenshot dir");
+		exit(EXIT_FAILURE);
+	}
+	
+	cJSON *json = cJSON_Parse(json_str);
+	free(json_str);
+	
+	cJSON *json_error = cJSON_GetObjectItemCaseSensitive(json, "error");
+	if(strcmp(json_error->valuestring, "success") != 0) {
+		perror("error: failed to set temp screenshot dir");
+		exit(EXIT_FAILURE);
+	}
+
+	cJSON_Delete(json);
+	log_verbose("screenshot directory successfully set", config);
+}
+
+void run_pywal(config_t *config) {
+	log_verbose("attempting to perform screenshot...", config);
+	char *json_str = send_to_mpv_socket(QUERY_MPVPAPER_SOCKET_DO_SCREENSHOT, config);
+	if(!json_str) {
+		perror("error: failed to perform a screenshot");
+		exit(EXIT_FAILURE);
+	}
+
+	cJSON *json = cJSON_Parse(json_str);
+	free(json_str);
+
+	if(!json) {
+		perror("error: failed to parse JSON");
+		exit(EXIT_FAILURE);
+	}
+
+	cJSON *json_data = cJSON_GetObjectItemCaseSensitive(json, "data");
+	cJSON *json_error = cJSON_GetObjectItemCaseSensitive(json, "error");
+	if(strcmp(json_error->valuestring, "success") != 0) {
+		perror("error: failed to perform a screenshot");
+		exit(EXIT_FAILURE);
+	}
+	
+	cJSON *json_filename = cJSON_GetObjectItemCaseSensitive(json_data, "filename");
+	if (!json_filename || !cJSON_IsString(json_filename)) {
+	    log_verbose("screenshot already exists, skipping", config);
+	    cJSON_Delete(json);
+	    return;
+	}
+	
+	char cmd_buf[256];
+	snprintf(cmd_buf, sizeof(cmd_buf), "wal -i %s >> %s/last_wal.log 2>&1", json_filename->valuestring, TEMP_DIR);
+	log_verbose("running pywal command:", config);
+	log_verbose(cmd_buf, config);
+
+	FILE *fp = popen(cmd_buf, "r");
+	if(!fp) {
+		perror("error: popen");
+		exit(EXIT_FAILURE);
+	}
+	
+	int status = WEXITSTATUS(pclose(fp));
+	if (status != EXIT_SUCCESS) {
+		perror("error: failed to run pywal");
+		exit(EXIT_FAILURE);
+	}
+
+	log_verbose("pywal ran succesfully", config);
+	log_verbose("removing screenshot:", config);
+	log_verbose(json_filename->valuestring, config);
+
+	if(remove(json_filename->valuestring) != 0) {
+		perror("error: cannot remove last screenshot");
+		exit(EXIT_FAILURE);
+	}
+	
+	cJSON_Delete(json);
+}
+
 void resume_mpv(config_t* config) {
     log_verbose("Resuming", config);
     char* response = send_to_mpv_socket(SET_MPVPAPER_SOCKET_RESUME, config);
@@ -216,6 +324,8 @@ void resume_mpv(config_t* config) {
 void pause_mpv(config_t* config) {
     log_verbose("Pausing", config);
     char* response = send_to_mpv_socket(SET_MPVPAPER_SOCKET_PAUSE, config);
+
+    if(config->do_pywal) run_pywal(config);
 
     if (response) free(response);
 }
@@ -277,6 +387,7 @@ int main(int argc, char **argv) {
         {"socket-path", required_argument, NULL, 'p'},
         {"fork", no_argument, NULL, 'f'},
         {"verbose", no_argument, NULL, 'v'},
+        {"pywal", no_argument, NULL, 'c'},
         {"socket-wait-time", required_argument, NULL, 'w'},
         {0, 0, 0, 0}
     };
@@ -284,7 +395,7 @@ int main(int argc, char **argv) {
     config_t config;
     init_config(&config);
 
-    while ((opt = getopt_long(argc, argv, "hvfp:t:w:", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "hvfcp:t:w:", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h':
                 print_help(argv[0]);
@@ -304,6 +415,9 @@ int main(int argc, char **argv) {
             case 'w':
                 config.socket_wait_time = atoi(optarg);
                 break;
+            case 'c':
+            	config.do_pywal = true;
+            	break;
             default:
                 print_help(argv[0]);
                 exit(EXIT_SUCCESS);
@@ -315,6 +429,8 @@ int main(int argc, char **argv) {
     fork_if(config.fork_process);
     config.mpvpaper_socket_fd = initialize_socket(config.mpvpaper_socket_path);
     config.hyprland_socket_fd = initialize_socket(config.hyprland_socket_path);
+
+    if(config.do_pywal) validate_pywal(&config);
 
     log_verbose("Starting monitoring loop", &config);
 

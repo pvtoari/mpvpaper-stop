@@ -11,12 +11,13 @@
 1.  It queries Hyprland via its IPC socket to determine the number of visible windows on the active workspace.
 2.  It checks the current playback status of `mpvpaper` (paused or playing) via its IPC socket.
 3.  If there are no windows visible and `mpvpaper` is paused, it sends a resume command.
-4.  If there are one or more windows visible and `mpvpaper` is playing, it sends a pause command.
+4.  If there are one or more windows visible and `mpvpaper` is playing, it sends a pause command and triggers specified behaviours by the user, such as color generation.
 
 This ensures that your video wallpaper only plays when it's actually visible.
 
 ## Features
 *   Automatic pause/resume of `mpvpaper` based on window visibility.
+*   Supports pywal on pause events to set your colour scheme to the paused frame's one
 *   Configurable polling period.
 *   Option to fork into the background.
 *   Verbose mode for debugging.
@@ -24,29 +25,23 @@ This ensures that your video wallpaper only plays when it's actually visible.
 *   Waits for the `mpvpaper` socket to be available before starting.
 
 ## Dependencies
-
-### Runtime:
 *   **[mpvpaper](https://github.com/GhostNaN/mpvpaper)**: Must be installed and running with IPC socket enabled.
 *   **Hyprland**
-
-### Build-time:
-*   **CMake** (version 3.5 or higher)
-*   A **C Compiler** supporting C11 (e.g., GCC, Clang)
-*   **Git** (for fetching cJSON library)
-*   Standard C libraries
-
+*   Optional: pywal
 ## Prerequisites: `mpvpaper` IPC Setup
 
 Before running `mpvpaper-stop`, ensure `mpvpaper` is started with the `input-ipc-server` option. This creates a socket that `mpvpaper-stop` uses to send commands.
 
 Example `mpvpaper` execution (add to your Hyprland config or run manually):
-```bash
+
+```ini
 # For a specific monitor (e.g., DP-1)
-exec mpvpaper -o "--input-ipc-server=/tmp/mpvsocket" DP-1 /path/to/your/video.mp4
+exec-once = mpvpaper -o "--input-ipc-server=/tmp/mpvsocket" DP-1 /path/to/your/video.mp4
 ```
+
 **Note:** `mpvpaper-stop` defaults to `/tmp/mpvsocket` for the socket path. If you use a different path for `mpvpaper`, you must specify it when running `mpvpaper-stop`.
 
-## Building `mpvpaper-stop`
+## Build using meson
 
 1.  **Clone the repository:**
     ```bash
@@ -54,40 +49,26 @@ exec mpvpaper -o "--input-ipc-server=/tmp/mpvsocket" DP-1 /path/to/your/video.mp
     cd mpvpaper-stop
     ```
 
-2.  **Configure and build using CMake:**
-    A helper script `build.sh` is provided:
+2.  **Setup project with meson**
     ```bash
-    ./build.sh
+    meson setup build
     ```
-    This will create a release build in the `cmake-build-release` directory. The executable will be `cmake-build-release/mpvpaper-stop`.
 
-    Alternatively, to build manually:
+3.  **Compile and install**
     ```bash
-    mkdir build
+    meson compile -C build
     cd build
-    cmake .. -DCMAKE_BUILD_TYPE=Release
-    cmake --build .
-    ```
-    The executable will be `build/mpvpaper-stop`.
-
-3.  **Manual install using CMake:**
-    If you want to install it system-wide (e.g., to `/usr/local/bin`):
-    ```bash
-    sudo cmake --install cmake-build-release # (from project root)
+    sudo meson install
     ```
 
 ## Usage
 
 Run `mpvpaper-stop` after `mpvpaper` has started.
 
-```bash
-# Assuming mpvpaper is already running and its socket is at /tmp/mpvsocket
-./mpvpaper-stop
-```
-
-If you built using `build.sh`:
-```bash
-./cmake-build-release/mpvpaper-stop
+e.g. in your Hyprland config:
+```ini
+exec-once = mpvpaper -o "--input-ipc-server=/tmp/mpvsocket" ALL bg.mp4
+exec-once = mpvpaper-stop
 ```
 
 ### Command-line options:
@@ -100,30 +81,21 @@ Options:
   -p, --socket-path PATH Path to the mpvpaper socket (default: /tmp/mpvsocket)
   -w, --socket-wait-time TIME Wait time for the socket in milliseconds (default: 5000)
   -t, --period TIME      Polling period in milliseconds (default: 1000)
+  -c, --pywal	         Runs pywal on pause
   -h, --help             Shows this help message
 ```
 
 **Example with custom options:**
 ```bash
-./mpvpaper-stop --socket-path /tmp/my-mpv-socket --period 500 --fork --verbose
+mpvpaper-stop --verbose --socket-path /tmp/my-mpv-socket --period 500 --pywal --fork 
 ```
+
 This will:
+*   Print verbose logs (if not forked, or to syslog if configured).
 *   Connect to `mpvpaper` at `/tmp/my-mpv-socket`.
 *   Check for windows every 500 milliseconds.
+*   Trigger pywal on a pause event
 *   Run in the background.
-*   Print verbose logs (if not forked, or to syslog if configured).
-
-To run `mpvpaper-stop` automatically on Hyprland startup, add it to your `hyprland.conf` after the `exec` line for `mpvpaper`:
-```ini
-# In your hyprland.conf
-exec-once = mpvpaper -o "--input-ipc-server=/tmp/mpvsocket" '*' /path/to/your/video.mp4
-exec-once = /path/to/your/mpvpaper-stop # Use the actual path to the executable
-```
-
-## How to control `mpvpaper` manually
-While `mpvpaper-stop` handles pause/resume, you can still send other commands to `mpvpaper` using `socat` or any tool that can coomunicate with a Unix socket.
-
-Refer to the [mpv manual's command interface section](https://mpv.io/manual/master/#command-interface) for available commands.
 
 ## License
 This project is licensed under the MIT license. See the `LICENSE` file for details.

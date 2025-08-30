@@ -1,6 +1,4 @@
-.idea/
-cmake-build-debug/
-cmake-build-release/
-
-*.sh
-!build.sh
+.idea
+.vscode
+.cache
+build
