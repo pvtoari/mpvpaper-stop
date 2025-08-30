@@ -12,7 +12,7 @@
 #include <string.h>
 
 #include "../include/constants.h"
-#include <cJSON.h>
+#include <cjson/cJSON.h>
 
 typedef struct {
     bool verbose;
