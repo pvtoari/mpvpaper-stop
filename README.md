@@ -57,8 +57,7 @@ exec-once = mpvpaper -o "--input-ipc-server=/tmp/mpvsocket" DP-1 /path/to/your/v
 3.  **Compile and install**
     ```bash
     meson compile -C build
-    cd build
-    sudo meson install
+    sudo meson install -C build
     ```
 
 ## Usage
