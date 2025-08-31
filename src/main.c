@@ -18,6 +18,7 @@ typedef struct {
     bool verbose;
     bool fork_process;
     bool do_pywal;
+    bool do_matugen;
     char* mpvpaper_socket_path;
     int mpvpaper_socket_fd;
     char* hyprland_socket_path;
@@ -34,7 +35,8 @@ void print_help(const char *program_name) {
     printf("  -p, --socket-path PATH Path to the mpvpaper socket (default: /tmp/mpvsocket)\n");
     printf("  -w, --socket-wait-time TIME Wait time for the socket in milliseconds (default: 5000)\n");
     printf("  -t, --period TIME      Polling period in milliseconds (default: 1000)\n");
-    printf("  -c, --pywal	         Runs pywal on pause");
+    printf("  --pywal	         Runs pywal on pause\n");
+    printf("  --matugen              Runs matugen on pause\n");
     printf("  -h, --help             Shows this help message\n");
 }
 
@@ -220,8 +222,14 @@ void create_temp_dir() {
     }
 }
 
-void validate_pywal(config_t *config) {
-	FILE *fp = popen("wal -v", "r");
+void validate_colors(config_t *config, char *mode) {
+  FILE *fp;
+  if (strcmp(mode, "pywal") == 0) {
+	  fp = popen("wal -v", "r");
+  } else if (strcmp(mode, "matugen") == 0) {
+    fp = popen("matugen --version", "r");
+  }
+
 	if (fp == NULL) {
 		perror("error: unable to open process");
 		exit(EXIT_FAILURE);
@@ -229,11 +237,11 @@ void validate_pywal(config_t *config) {
 
 	int status = WEXITSTATUS(pclose(fp));
 	if (status != EXIT_SUCCESS) {
-		perror("error: cannot run pywal");
+		perror(("error: cannot run %s", mode));
 		exit(EXIT_FAILURE);
 	}
 
-	log_verbose("pywal is available", config);
+	log_verbose(("%s is available", mode), config);
 	create_temp_dir();
 
 	char *json_str = send_to_mpv_socket(SET_MPVPAPER_SCREENSHOT_DIR, config);
@@ -255,7 +263,7 @@ void validate_pywal(config_t *config) {
 	log_verbose("screenshot directory successfully set", config);
 }
 
-void run_pywal(config_t *config) {
+void run_colors(config_t *config, char *mode) {
 	log_verbose("attempting to perform screenshot...", config);
 	char *json_str = send_to_mpv_socket(QUERY_MPVPAPER_SOCKET_DO_SCREENSHOT, config);
 	if(!json_str) {
@@ -286,8 +294,12 @@ void run_pywal(config_t *config) {
 	}
 	
 	char cmd_buf[256];
-	snprintf(cmd_buf, sizeof(cmd_buf), "wal -i %s >> %s/last_wal.log 2>&1", json_filename->valuestring, TEMP_DIR);
-	log_verbose("running pywal command:", config);
+  if (strcmp(mode, "pywal") == 0) {
+	  snprintf(cmd_buf, sizeof(cmd_buf), "wal -i %s >> %s/last_wal.log 2>&1", json_filename->valuestring, TEMP_DIR);
+  } else if (strcmp(mode, "matugen") == 0) {
+    snprintf(cmd_buf, sizeof(cmd_buf), "matugen image %s -m dark >> %s/last_matugen.loc 2>&1", json_filename->valuestring, TEMP_DIR);
+  }
+	log_verbose(("running %s command:", mode), config);
 	log_verbose(cmd_buf, config);
 
 	FILE *fp = popen(cmd_buf, "r");
@@ -298,11 +310,11 @@ void run_pywal(config_t *config) {
 	
 	int status = WEXITSTATUS(pclose(fp));
 	if (status != EXIT_SUCCESS) {
-		perror("error: failed to run pywal");
+		perror(("error: failed to run %s", mode));
 		exit(EXIT_FAILURE);
 	}
 
-	log_verbose("pywal ran succesfully", config);
+	log_verbose(("%s ran succesfully", mode), config);
 	log_verbose("removing screenshot:", config);
 	log_verbose(json_filename->valuestring, config);
 
@@ -325,8 +337,8 @@ void pause_mpv(config_t* config) {
     log_verbose("Pausing", config);
     char* response = send_to_mpv_socket(SET_MPVPAPER_SOCKET_PAUSE, config);
 
-    if(config->do_pywal) run_pywal(config);
-
+    if (config->do_pywal == true) run_colors(config, "pywal");
+    if (config->do_matugen == true) run_colors(config, "matugen");
     if (response) free(response);
 }
 
@@ -387,15 +399,18 @@ int main(int argc, char **argv) {
         {"socket-path", required_argument, NULL, 'p'},
         {"fork", no_argument, NULL, 'f'},
         {"verbose", no_argument, NULL, 'v'},
-        {"pywal", no_argument, NULL, 'c'},
+        {"pywal", no_argument, NULL, 'y'},
+        {"matugen", no_argument, NULL, 'g'},
         {"socket-wait-time", required_argument, NULL, 'w'},
         {0, 0, 0, 0}
     };
 
     config_t config;
     init_config(&config);
+    config.do_pywal = false;
+    config.do_matugen = false;
 
-    while ((opt = getopt_long(argc, argv, "hvfcp:t:w:", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "hvfp:t:w:", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h':
                 print_help(argv[0]);
@@ -415,9 +430,12 @@ int main(int argc, char **argv) {
             case 'w':
                 config.socket_wait_time = atoi(optarg);
                 break;
-            case 'c':
-            	config.do_pywal = true;
-            	break;
+            case 'y': // For --pywal
+                config.do_pywal = true;
+                break;
+            case 'g': // For --matugen
+                config.do_matugen = true;
+                break;
             default:
                 print_help(argv[0]);
                 exit(EXIT_SUCCESS);
@@ -430,7 +448,8 @@ int main(int argc, char **argv) {
     config.mpvpaper_socket_fd = initialize_socket(config.mpvpaper_socket_path);
     config.hyprland_socket_fd = initialize_socket(config.hyprland_socket_path);
 
-    if(config.do_pywal) validate_pywal(&config);
+    if (config.do_pywal == true) validate_colors(&config, "pywal");
+    if (config.do_matugen == true) validate_colors(&config, "matugen");
 
     log_verbose("Starting monitoring loop", &config);
 
