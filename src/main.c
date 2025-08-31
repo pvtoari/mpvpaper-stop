@@ -35,6 +35,7 @@ void print_help(const char *program_name) {
     printf("  -p, --socket-path PATH Path to the mpvpaper socket (default: /tmp/mpvsocket)\n");
     printf("  -w, --socket-wait-time TIME Wait time for the socket in milliseconds (default: 5000)\n");
     printf("  -t, --period TIME      Polling period in milliseconds (default: 1000)\n");
+    printf("  -c <color_backend>     Chooses color backend (pywal or matugen)\n");
     printf("  --pywal	         Runs pywal on pause\n");
     printf("  --matugen              Runs matugen on pause\n");
     printf("  -h, --help             Shows this help message\n");
@@ -399,8 +400,8 @@ int main(int argc, char **argv) {
         {"socket-path", required_argument, NULL, 'p'},
         {"fork", no_argument, NULL, 'f'},
         {"verbose", no_argument, NULL, 'v'},
-        {"pywal", no_argument, NULL, 'y'},
-        {"matugen", no_argument, NULL, 'g'},
+        {"pywal", no_argument, NULL, '_pywal'},
+        {"matugen", no_argument, NULL, '_matugen'},
         {"socket-wait-time", required_argument, NULL, 'w'},
         {0, 0, 0, 0}
     };
@@ -410,7 +411,7 @@ int main(int argc, char **argv) {
     config.do_pywal = false;
     config.do_matugen = false;
 
-    while ((opt = getopt_long(argc, argv, "hvfp:t:w:", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "hvfp:c:t:w:", long_options, NULL)) != -1) {
         switch (opt) {
             case 'h':
                 print_help(argv[0]);
@@ -430,10 +431,15 @@ int main(int argc, char **argv) {
             case 'w':
                 config.socket_wait_time = atoi(optarg);
                 break;
-            case 'y': // For --pywal
+            // This exists purely for allowing options in the -c short option
+            case 'c':
+                if(strcmp(optarg, "pywal") == 0) config.do_pywal = true;
+                if(strcmp(optarg, "matugen") == 0) config.do_matugen = true;
+                break;
+            case '_pywal': // For --pywal
                 config.do_pywal = true;
                 break;
-            case 'g': // For --matugen
+            case '_matugen': // For --matugen
                 config.do_matugen = true;
                 break;
             default:
